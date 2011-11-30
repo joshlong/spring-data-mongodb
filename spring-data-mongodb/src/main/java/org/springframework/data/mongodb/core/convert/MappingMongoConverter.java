@@ -299,8 +299,8 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 	/**
 	 * Root entry method into write conversion. Adds a type discriminator to the {@link DBObject}. Shouldn't be called for
 	 * nested conversions.
-	 * 
-	 * @see org.springframework.data.mongodb.core.core.convert.MongoWriter#write(java.lang.Object, com.mongodb.DBObject)
+	 *
+     * @see MongoWriter#write(Object, Object)
 	 */
 	public void write(final Object obj, final DBObject dbo) {
 
@@ -447,7 +447,7 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 
 		String name = prop.getFieldName();
 
-		if (prop.isCollectionLike()) {
+		if (prop.isCollection()) {
 			DBObject collectionInternal = createCollection(asCollection(obj), prop);
 			dbo.put(name, collectionInternal);
 			return;
@@ -743,6 +743,9 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 			if (sourceValue instanceof DBRef) {
 				sourceValue = ((DBRef) sourceValue).fetch();
 			}
+
+
+
 			if (sourceValue instanceof DBObject) {
 				if (prop.isMap()) {
 					return readMap(prop.getTypeInformation(), (DBObject) sourceValue);
@@ -750,7 +753,7 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 						&& ((DBObject) sourceValue).keySet().size() == 0) {
 					// It's empty
 					return Array.newInstance(prop.getComponentType(), 0);
-				} else if (prop.isCollectionLike() && sourceValue instanceof BasicDBList) {
+				} else if (prop.isCollection() && sourceValue instanceof BasicDBList) {
 					return readCollectionOrArray((TypeInformation<? extends Collection<?>>) prop.getTypeInformation(),
 							(BasicDBList) sourceValue);
 				}

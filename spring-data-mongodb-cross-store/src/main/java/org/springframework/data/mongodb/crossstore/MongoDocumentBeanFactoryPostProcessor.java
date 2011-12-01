@@ -49,7 +49,7 @@ public class MongoDocumentBeanFactoryPostProcessor implements BeanFactoryPostPro
 
     }
 
-    private boolean exists(Class<?> beanClass, BeanDefinitionRegistry registry) {
+    static private boolean exists(Class<?> beanClass, BeanDefinitionRegistry registry) {
 
         String needleClass = beanClass.getClass().getName();
         String[] beanNames = registry.getBeanDefinitionNames();
@@ -74,12 +74,32 @@ public class MongoDocumentBeanFactoryPostProcessor implements BeanFactoryPostPro
         ///"org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler");
         // first, let's check to see if exception translation's already registered
 
-        Class<PersistenceExceptionTranslationPostProcessor> petpp = PersistenceExceptionTranslationPostProcessor.class;
-        boolean isPersistenceExceptionTranslationPostProcessorRegistered = exists(petpp, beanDefinitionRegistry);
-        if (!isPersistenceExceptionTranslationPostProcessorRegistered) {
 
-            BeanDefinitionBuilder beanDefinitionBuilder =  BeanDefinitionBuilder.genericBeanDefinition(petpp) ;
+    }
+
+    static <T> void registerIfNotRegistered(BeanDefinitionRegistry beanDefinitionRegistry, Class<T> t, BeanDefinitionBuilderCallback<T> cb) {
+        String beanName = t.getSimpleName().toLowerCase();
+        Class<PersistenceExceptionTranslationPostProcessor> petpp = PersistenceExceptionTranslationPostProcessor.class;
+        if (!exists(petpp, beanDefinitionRegistry)) {
+            BeanDefinitionBuilder beanDefinitionBuilder = BeanDefinitionBuilder.genericBeanDefinition(petpp);
+            cb.build(beanDefinitionBuilder, t);
+            beanDefinitionRegistry.registerBeanDefinition(uniqueBeanName(beanDefinitionRegistry, beanName), beanDefinitionBuilder.getBeanDefinition());
 
         }
+    }
+
+    static interface BeanDefinitionBuilderCallback<T> {
+        void build(BeanDefinitionBuilder b, Class<T> t);
+    }
+
+    static private String PPETP_BEAN_NAME = PersistenceExceptionTranslationPostProcessor.class.getSimpleName().toLowerCase();
+
+    // utility method
+    private static String uniqueBeanName(BeanDefinitionRegistry beanDefinitionRegistry, String base) {
+        String name = base;
+        int counter = 0;
+        while (beanDefinitionRegistry.isBeanNameInUse(name))
+            name = name + counter;
+        return name;
     }
 }

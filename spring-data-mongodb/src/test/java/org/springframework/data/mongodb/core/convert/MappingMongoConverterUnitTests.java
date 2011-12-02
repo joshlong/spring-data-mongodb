@@ -817,7 +817,44 @@ public class MappingMongoConverterUnitTests {
 		assertThat(result, is(dbObject));
 	}
 	
+	/**
+	 * @see DATAMONGO-329
+	 */
+	@Test
+	public void writesMapAsGenericFieldCorrectly() {
+		
+		Map<String, A<String>> objectToSave = new HashMap<String, A<String>>();
+		objectToSave.put("test", new A<String>("testValue"));
+
+		A<Map<String, A<String>>> a = new A<Map<String, A<String>>>(objectToSave);
+		DBObject result = new BasicDBObject();
+
+		converter.write(a, result);
+		
+		assertThat((String) result.get(DefaultMongoTypeMapper.DEFAULT_TYPE_KEY), is(A.class.getName()));
+		assertThat((String) result.get("valueType"), is(HashMap.class.getName()));
+		
+		DBObject object = (DBObject) result.get("value");
+		assertThat(object, is(notNullValue()));
+		
+		DBObject inner = (DBObject) object.get("test");
+		assertThat(inner, is(notNullValue()));
+		assertThat((String) inner.get(DefaultMongoTypeMapper.DEFAULT_TYPE_KEY), is(A.class.getName()));
+		assertThat((String) inner.get("valueType"), is(String.class.getName()));
+		assertThat((String) inner.get("value"), is("testValue"));
+	}
 	
+	@Test
+	public void writesIntIdCorrectly() {
+		
+		ClassWithIntId value = new ClassWithIntId();
+		value.id = 5;
+		
+		DBObject result = new BasicDBObject();
+		converter.write(value, result);
+		
+		assertThat(result.get("_id"), is((Object) 5));
+	}
 	
 	class GenericType<T> {
 		T content;
@@ -910,6 +947,23 @@ public class MappingMongoConverterUnitTests {
 	class ClassWithBigIntegerId {
 		@Id
 		BigInteger id;
+	}
+
+	class A<T> {
+
+		String valueType;
+		T value;
+
+		public A(T value) {
+			this.valueType = value.getClass().getName();
+			this.value = value;
+		}
+	}
+
+	class ClassWithIntId {
+		
+		@Id
+		int id;
 	}
 	
 	private class LocalDateToDateConverter implements Converter<LocalDate, Date> {

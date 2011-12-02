@@ -17,7 +17,6 @@ package org.springframework.data.mongodb.core.convert;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.InvocationTargetException;
-import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -28,7 +27,6 @@ import java.util.Map.Entry;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.bson.types.ObjectId;
 import org.springframework.beans.BeansException;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
@@ -72,16 +70,13 @@ import com.mongodb.DBRef;
  * @author Oliver Gierke
  * @author Jon Brisbin
  */
-public class MappingMongoConverter extends AbstractMongoConverter implements ApplicationContextAware, TypeKeyAware {
+public class MappingMongoConverter extends AbstractMongoConverter implements ApplicationContextAware {
 
 	@SuppressWarnings("rawtypes")
 	private static final TypeInformation<Map> MAP_TYPE_INFORMATION = ClassTypeInformation.from(Map.class);
 	@SuppressWarnings("rawtypes")
 	private static final TypeInformation<Collection> COLLECTION_TYPE_INFORMATION = ClassTypeInformation
 			.from(Collection.class);
-
-	private static final List<Class<?>> VALID_ID_TYPES = Arrays.asList(new Class<?>[] { ObjectId.class, String.class,
-			BigInteger.class, byte[].class });
 
 	protected static final Log log = LogFactory.getLog(MappingMongoConverter.class);
 
@@ -99,6 +94,7 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 	 * @param mongoDbFactory must not be {@literal null}.
 	 * @param mappingContext must not be {@literal null}.
 	 */
+	@SuppressWarnings("deprecation")
 	public MappingMongoConverter(MongoDbFactory mongoDbFactory,
 			MappingContext<? extends MongoPersistentEntity<?>, MongoPersistentProperty> mappingContext) {
 
@@ -110,7 +106,7 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 		this.mongoDbFactory = mongoDbFactory;
 		this.mappingContext = mappingContext;
 		this.typeMapper = new DefaultMongoTypeMapper(DefaultMongoTypeMapper.DEFAULT_TYPE_KEY, mappingContext);
-		this.idMapper = new QueryMapper(conversionService);
+		this.idMapper = new QueryMapper(this);
 	}
 
 	/**
@@ -124,14 +120,6 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 	public void setTypeMapper(MongoTypeMapper typeMapper) {
 		this.typeMapper = typeMapper == null ? new DefaultMongoTypeMapper(DefaultMongoTypeMapper.DEFAULT_TYPE_KEY,
 				mappingContext) : typeMapper;
-	}
-
-	/*
-	 * (non-Javadoc)
-	 * @see org.springframework.data.mongodb.core.convert.TypeKeyAware#isTypeKey(java.lang.String)
-	 */
-	public boolean isTypeKey(String key) {
-		return typeMapper.isTypeKey(key);
 	}
 
 	/*
@@ -369,29 +357,15 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 		// Write the ID
 		final MongoPersistentProperty idProperty = entity.getIdProperty();
 		if (!dbo.containsField("_id") && null != idProperty) {
-			Object idObj = null;
-			Class<?>[] targetClasses = new Class<?>[] { ObjectId.class, String.class, Object.class };
-			for (Class<?> targetClass : targetClasses) {
-				try {
-					idObj = wrapper.getProperty(idProperty, targetClass, useFieldAccessOnly);
-					if (null != idObj) {
-						break;
-					}
-				} catch (ConversionException ignored) {
-				} catch (IllegalAccessException e) {
-					throw new MappingException(e.getMessage(), e);
-				} catch (InvocationTargetException e) {
-					throw new MappingException(e.getMessage(), e);
-				}
-			}
-
-			if (null != idObj) {
-				dbo.put("_id", idObj);
-			} else {
-				if (!VALID_ID_TYPES.contains(idProperty.getType())) {
-					throw new MappingException("Invalid data type " + idProperty.getType().getName()
-							+ " for Id property. Should be one of " + VALID_ID_TYPES);
-				}
+			
+			try {
+				Object id = wrapper.getProperty(idProperty, Object.class, useFieldAccessOnly);
+				dbo.put("_id", idMapper.convertId(id));
+			} catch (ConversionException ignored) {
+			} catch (IllegalAccessException e) {
+				throw new MappingException(e.getMessage(), e);
+			} catch (InvocationTargetException e) {
+				throw new MappingException(e.getMessage(), e);
 			}
 		}
 
@@ -446,16 +420,16 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 		}
 
 		String name = prop.getFieldName();
+		TypeInformation<?> valueType = ClassTypeInformation.from(obj.getClass());
+		TypeInformation<?> type = prop.getTypeInformation();
 
-		if (prop.isCollectionLike()) {
+		if (valueType.isCollectionLike()) {
 			DBObject collectionInternal = createCollection(asCollection(obj), prop);
 			dbo.put(name, collectionInternal);
 			return;
 		}
 
-		TypeInformation<?> type = prop.getTypeInformation();
-
-		if (prop.isMap()) {
+		if (valueType.isMap()) {
 			BasicDBObject mapDbObj = new BasicDBObject();
 			writeMapInternal((Map<Object, Object>) obj, mapDbObj, type);
 			dbo.put(name, mapDbObj);
@@ -596,7 +570,8 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 							writeCollectionInternal(asCollection(val), propertyType.getMapValueType(), new BasicDBList()));
 				} else {
 					DBObject newDbo = new BasicDBObject();
-					writeInternal(val, newDbo, propertyType);
+					TypeInformation<?> valueTypeInfo = propertyType.isMap() ? propertyType.getMapValueType() : ClassTypeInformation.from(Object.class);
+					writeInternal(val, newDbo, valueTypeInfo);
 					dbo.put(simpleKey, newDbo);
 				}
 			} else {
@@ -910,7 +885,7 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 
 		DBObject newDbo = new BasicDBObject();
 		this.write(obj, newDbo);
-		return newDbo;
+		return removeTypeInfoRecursively(newDbo);
 	}
 
 	public BasicDBList maybeConvertList(Iterable<?> source) {
@@ -919,5 +894,42 @@ public class MappingMongoConverter extends AbstractMongoConverter implements App
 			newDbl.add(convertToMongoType(element));
 		}
 		return newDbl;
+	}
+	
+	/**
+	 * Removes the type information from the conversion result.
+	 * 
+	 * @param object
+	 * @return
+	 */
+	private Object removeTypeInfoRecursively(Object object) {
+
+		if (!(object instanceof DBObject)) {
+			return object;
+		}
+
+		DBObject dbObject = (DBObject) object;
+		String keyToRemove = null;
+		for (String key : dbObject.keySet()) {
+
+			if (typeMapper.isTypeKey(key)) {
+				keyToRemove = key;
+			}
+
+			Object value = dbObject.get(key);
+			if (value instanceof BasicDBList) {
+				for (Object element : (BasicDBList) value) {
+					removeTypeInfoRecursively(element);
+				}
+			} else {
+				removeTypeInfoRecursively(value);
+			}
+		}
+
+		if (keyToRemove != null) {
+			dbObject.removeField(keyToRemove);
+		}
+
+		return dbObject;
 	}
 }
